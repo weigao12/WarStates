@@ -24,12 +24,14 @@ RED = (255, 0, 0)
 BLUE= (0, 0, 255)
 YELLOW= (255,255,0)
 
+MAX_BLOCKS = 10000
 SCREEN_EDGE = 5
 SCREEN_WIDTH = 250
 SCREEN_HEIGHT = 300
 BLOCK_WIDTH = 10
 STATE_NUM = 1
 StateName = {"RED":RED,"BLUE":BLUE,"GREEN":GREEN}
+Directions = {"upper":[0,1],"lower":[0,-1],"right":[1,0],"left":[-1,0],"upperleft":[-1,1],"upperright":[1,1],"lowerleft":[-1,-1],"lowerright":[1,-1]}
 #RGB = StateName[jname]
 # --- Classes ---
 
@@ -325,7 +327,7 @@ class State(object):
         #out of screen, older block is border
         if((new_block.rect.y > SCREEN_HEIGHT-SCREEN_EDGE) or (new_block.rect.x>SCREEN_WIDTH-SCREEN_EDGE)
           or (new_block.rect.y <0 ) or (new_block.rect.x < 0)):
-                 return 100
+                 return MAX_BLOCKS 
 
 
         #expand into own terr, return 2
@@ -342,7 +344,7 @@ class State(object):
             self.borderBlocks.add(new_block)
             return 1
         #not in my state, neither enemy state, return 100 as out of screen, older block is border
-        return 100
+        return MAX_BLOCKS 
 
     def expandConflictToState(self,enemy):
         # State expand to enemy state.
@@ -361,7 +363,7 @@ class State(object):
             isConflict += self.expandToEnemyDirection(block,enemy,-1,1)
 
             #if no block add, it is in own terr
-            if(isConflict == 0):
+            if(isConflict == 0 ):
                 self.borderBlocks.remove(block)
             #if block expand to enemy terrertry, it will not be a border block
             #if(isConflict > 0):
@@ -370,6 +372,32 @@ class State(object):
                     #self.borderBlocks.remove(block)
                     #print('------------add block',add_block_num)
 
+
+    def takeCities(self,enemy,killedArmy):
+        # State expand to enemy state.
+        print("State %(s)s take %(k)s blocks from state %(e)s"%{"s":self.name,"k":killedArmy,"e":enemy.name})
+        self.block_list = self.borderBlocks
+        new_block = CityBlock(self.colour)
+
+        for block in self.block_list :
+            isConflict=0
+            for key,val in Directions.items() :
+                #print("Direction x is ",val[0])
+                #print("Direction y is ",val[1])
+                isConflict = self.expandToEnemyDirection(block,enemy,val[0],val[1])
+                #print("State %(s)s take %(k)s blocks from state %(e)s"%{"s":self.name,"k":isConflict,"e":enemy.name})
+                if( (isConflict == 1) and (killedArmy > 0)):
+                    new_block.rect.x = block.rect.x  + val[0]*block.radius
+                    new_block.rect.y = block.rect.y  + val[1]*block.radius
+
+                    blocks_hit_list = pygame.sprite.spritecollide(new_block,enemy.all_sprites_list, True)
+                    for delB in blocks_hit_list:
+                        enemy.delBlock(delB)
+
+                    killedArmy = killedArmy - 1
+                else:
+                    if(killedArmy == 0):
+                        return 
 
     def updStatewarborderCnt(self,enemy):
         self.warborderCnt[enemy.name] = 0
@@ -388,21 +416,65 @@ class State(object):
         #print("State %(s)s border count to state %(n)s is %(c)s"%{"s":self.name,"n":enemy.name,"c":self.warborderCnt[enemy.name]})
 
     def conflictWithType(self,enemy,type):
-        if(type == "army"):
-            self.armyConflictToState(enemy)
+        if(type == "border"):
+            self.borderConflictToState(enemy)
         if(type == "line"):
             self.lineConflictToState(enemy)
+        if(type == "army"):
+            self.armyConflictToState(enemy)
 
     def armyConflictToState(self,enemy):
+        #attack border block, consume army = enemy *2
+        #army VS enemy center army + remain border 
+        if ((self.army[enemy.name] == 0) or (enemy.army[self.name] == 0)):
+            return
+
+        enemy.army[enemy.name] = 0
+        enemy.army[self.name] = enemy.army[self.name] +  enemy.army[enemy.name] 
+        eArmy = enemy.army[self.name] 
+        sArmy = self.army[enemy.name]
+        print("state %(n)s %(s)s VS state %(m)s %(b)s"% {'n': self.name, 's':sArmy,'m': enemy.name,'b':eArmy})
+
+        armyComp = self.army[enemy.name]/enemy.army[self.name]
+        risk = random.uniform(0, 1)
+
+        attackArmy =  risk * sArmy
+        defenseArmy = (1-risk) * eArmy
+
+        print("risk is %(r)s, state %(n)s %(s)s VS state %(m)s %(b)s"% {'r':risk,'n': self.name, 's':attackArmy,'m': enemy.name,'b':defenseArmy})
+        #killed Army Num = taken blocks Num
+        killedArmy = round(abs (attackArmy - defenseArmy)) 
+        if(attackArmy > defenseArmy):
+            self.takeCities(enemy,killedArmy)
+            self.selBorder()
+        else:
+            enemy.takeCities(self,killedArmy)
+            enemy.selBorder()
+       
+
+        #the more powerful army, the less it loss
+        self.army[enemy.name] = self.army[enemy.name] - (1-risk)*sArmy
+        enemy.army[self.name] = enemy.army[self.name] - risk * eArmy
+
+    def borderConflictToState(self,enemy):
         if ((self.army[enemy.name] == 0) or (enemy.army[self.name] == 0)):
             return
 
         armyComp = self.army[enemy.name]/enemy.army[self.name]
+        #print("Before conflict, Army: state %(n)s %(s)s VS state %(m)s %(b)s"% {'n': self.name, 's':self.army[enemy.name], 'm': enemy.name,'b':enemy.army[self.name]})
         if(armyComp >= self.aggression):
             print("Army: state %(n)s %(s)s VS state %(m)s %(b)s"% {'n': self.name, 's':self.army[enemy.name], 'm': enemy.name,'b':enemy.army[self.name]})
-            print("Blocks: state %(n)s %(s)s VS state %(m)s %(b)s"% {'n': self.name, 's':self.warborderCnt[enemy.name], 'm': enemy.name,'b':enemy.warborderCnt[self.name]})
-            print("Army comp bigger than 5, attack",armyComp)
+            #print("Blocks: state %(n)s %(s)s VS state %(m)s %(b)s"% {'n': self.name, 's':self.warborderCnt[enemy.name], 'm': enemy.name,'b':enemy.warborderCnt[self.name]})
+            #print("Army comp bigger than 5, attack",armyComp)
             if (self.warborderCnt[enemy.name] > 1):
+                #army clash
+                sArmy = self.army[enemy.name]
+                eArmy = enemy.army[self.name] 
+
+                risk = random.uniform(0, 1)
+                #take blocks
+
+            # warborder attack
             #    army war mode  ---- lost army  /total army = lost block / total blocks
                 self.expandConflictToState(enemy)
                 for warField in self.borderBlocks:
@@ -413,12 +485,12 @@ class State(object):
                     #defense strength * 2(SunZi yue, bei ze zhan zhi), every defense block arrange equal army
                     blockSoldiers = self.army[enemy.name] / self.warborderCnt[enemy.name]
                     enemyBlockSoldiers = enemy.army[self.name] / enemy.warborderCnt[self.name]
-                    print("state %(n)s %(s)s VS state %(m)s %(b)s"% {'n': self.name, 's':blockSoldiers, 'm': enemy.name,'b':enemyBlockSoldiers })
+                    #print("state %(n)s %(s)s VS state %(m)s %(b)s"% {'n': self.name, 's':blockSoldiers, 'm': enemy.name,'b':enemyBlockSoldiers })
                     if(blockSoldiers/enemyBlockSoldiers >=2):
                         blocks_hit_list = pygame.sprite.spritecollide(warField,enemy.all_sprites_list, True)
                         for delB in blocks_hit_list:
                             enemy.delBlock(delB)
-                        print("state %(n)s VS state %(m)s Win 1 battal"% {'n': self.name,'m': enemy.name})
+                        #print("state %(n)s VS state %(m)s Win 1 battal"% {'n': self.name,'m': enemy.name})
                         self.army[enemy.name] = self.army[enemy.name] - enemyBlockSoldiers*2
                         enemy.army[self.name] = enemy.army[self.name] - enemyBlockSoldiers
                     else:
@@ -431,10 +503,6 @@ class State(object):
             #    soldier fight mode
                 self.lineConflictToState(enemy)
                 
-   
-
-
-
     def lineConflictToState(self,enemy):
         self.expandConflictToState(enemy)
         for warField in self.borderBlocks:
@@ -503,6 +571,16 @@ class State(object):
             #no enemy now
             self.army[self.name] =  temp_power
 
+    def aggressive(self):
+        print("State aggressive ",self.name)
+        self.aggression = 2
+         #for key,val in self.warborderCnt.items():
+         #   totalwarborderCnt = totalwarborderCnt + val
+            #print("State %(s)s border to state %(n)s is %(c)s"%{"s":self.name,"n":key,"c":val})
+       
+    def deaggressive(self):
+        print("State deaggressive ",self.name)
+        self.aggression = 5
 
 
 
@@ -516,6 +594,7 @@ class Game(object):
         """ Constructor. Create all our attributes and initialize
         the game. """
 
+        self.screen = 0 
         self.isPeace= 1
         self.autoFight = 0
         self.game_over = False
@@ -557,8 +636,19 @@ class Game(object):
                     self.print_states()
                 if event.key == pygame.K_f:
                     self.autoFight = True
-
+                if event.key == pygame.K_r:
+                    self.stateAggressive("RED")
+                if event.key == pygame.K_b:
+                    self.stateAggressive("BLUE")
+                if event.key == pygame.K_g:
+                    self.stateAggressive("GREEN")
+ 
         return False
+
+    def stateAggressive(self, name):
+        for s in self.states:
+            if(s.name == name):
+                s.aggressive()
 
     def stateExpandConflict(self,state):
         for s in self.states:
@@ -579,11 +669,57 @@ class Game(object):
     def updStateswarborderCnt(state,its_enemy):
         state.warborderCnt[its_enemy.name]  = 0;
 
+    def unitedNeighborsAttack(self,superState):
+        self.display_frame()
+        clock = pygame.time.Clock()
+        clock.tick(2)
+        #print("United neighbors attack ",superState.name)
+        #
+        for state in self.states:
+            if(state != superState):
+                if(state.warborderCnt[superState.name] != 0): 
+                    #attack with state's central army
+                    state.army[superState.name] = state.army[superState.name] +state.army[state.name]
+                    state.army[state.name] = 0
+
+                    #neighbor's trust each other and add border defend army
+                    for s in self.states:
+                        if(s != state) and (s != superState):
+                            if(s.warborderCnt[superState.name] != 0):
+                                state.army[superState.name] = state.army[superState.name] + state.army[s.name] 
+                                state.army[s.name] = 0 
+
+                    aggress = state.aggression
+                    state.aggression = 3
+                    state.borderConflictToState(superState)
+                    state.aggression = aggress 
+
+        clock.tick(2)
+
+
+    def statesBalance(self):
+        #if super state's block count is bigger than the multi of others neighbor
+        #neighbors unite and attack this state
+        stateBlockCnt = {}
+        for state in self.states:
+            stateBlockCnt[state.name] = len(state.all_sprites_list.sprites())
+            
+        for state in self.states:
+            neighborsBlockCnt = 0
+            for s in self.states:
+                if(state != s):
+                    neighborsBlockCnt = neighborsBlockCnt +len(s.all_sprites_list.sprites())
+            #print("State %(n)s power is %(c)s"%{"n":state.name,"c":stateBlockCnt[state.name]})
+            #print("State %(n)s neighbo power is %(c)s"%{"n":state.name,"c":neighborsBlockCnt})
+            if(stateBlockCnt[state.name] > neighborsBlockCnt):
+                self.unitedNeighborsAttack(state)
+
     def run_logic(self):
         """
         This method is run each time through the frame. It
         updates positions and checks for collisions.
         """
+
         if(self.isPeace == 1):
             for state in self.states:
                 self.stateExpandPeace(state)
@@ -592,12 +728,17 @@ class Game(object):
             for state in self.states:
                 self.stateExpandConflict(state)
 
+
         for state in self.states:
             for s in self.states:
                 if(state != s):
                     state.updStatewarborderCnt(s)
             state.arrangeArmy()
 
+        self.statesBalance()
+
+        #for state in self.states:
+        #    state.deaggressive()
         #if not self.game_over:
             # Move all the sprites
 
@@ -605,8 +746,9 @@ class Game(object):
             #blocks_hit_list = pygame.sprite.spritecollide(self.player, self.block_list, True)
 
 
-    def display_frame(self, screen):
+    def display_frame(self):
         """ Display everything to the screen for the game. """
+        screen = self.screen
         screen.fill(WHITE)
 
         if self.game_over:
@@ -751,16 +893,17 @@ def main():
     clock = pygame.time.Clock()
 
     game = Game()
+    game.screen = screen
 
     # Main game loop
     while not done:
       #if(statesDisplayFreq%5 ==0 ):
         # Process events (keystrokes, mouse clicks, etc)
         done = game.process_events()
-        # Update object positions, check for collisions
         game.run_logic()
+        # Update object positions, check for collisions
         # Draw the current frame
-        game.display_frame(screen)
+        game.display_frame()
         #game.show_1_frame(frameID)
       #statesDisplayFreq +=1
       # Pause for the next frame
@@ -773,3 +916,5 @@ def main():
 # Call the main function, start up the game
 if __name__ == "__main__":
     main()
+
+
